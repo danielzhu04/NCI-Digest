@@ -4,7 +4,8 @@ import { z } from "zod"
 import { db } from "../database/index.js"
 import { DEFAULT_CRITERIA, MEDIUM_IDS, WINDOW_IDS } from "../signalOptions.js"
 
-export const DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+export const DEFAULT_MODEL = process.env.SIGNAL_DEFAULT_MODEL || "gpt-5.5-2026-04-23"
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash"
 const RESERVED_SLUGS = new Set(["new", "options", "nci-signal", "flagship", "admin", "api"])
 
 export function allowedModels() {
@@ -12,7 +13,8 @@ export function allowedModels() {
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean)
-  return [...new Set([DEFAULT_MODEL, ...extra])]
+  const gemini = process.env.GEMINI_API_KEY ? [GEMINI_MODEL] : []
+  return [...new Set([DEFAULT_MODEL, ...gemini, ...extra])]
 }
 
 export function dailyLimit() {

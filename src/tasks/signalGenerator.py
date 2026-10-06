@@ -12,6 +12,7 @@ import json
 import os
 import re
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
@@ -27,13 +28,21 @@ from .reusableOutputs import extract_pdf_text
 
 dotenv.load_dotenv()
 
-DEFAULT_MODEL = "gpt-5.5-2026-04-23"
+DEFAULT_MODEL = os.getenv("SIGNAL_DEFAULT_MODEL") or "gpt-5.5-2026-04-23"
 MAX_PDF_BYTES = 50 * 1024 * 1024
 MIN_EXTRACTED_CHARS = 400
 SLIDE_PAUSE_MS = 350
 OPENAI_TIMEOUT_S = float(os.getenv("OPENAI_TIMEOUT", "180"))
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT_S)
+_openai_client: Optional[openai.Client] = None
+
+
+def _openai() -> openai.Client:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT_S)
+    return _openai_client
 
 SOURCE_RULES = """
 SOURCE RULES
@@ -184,6 +193,51 @@ def _user_content(
     }]
 
 
+def _is_gemini(model: str) -> bool:
+    return (model or "").lower().startswith("gemini")
+
+
+def _gemini_parts(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parts = []
+    for part in content:
+        if part["type"] == "input_text":
+            parts.append({"text": part["text"]})
+        elif part["type"] == "input_file":
+            data = part["file_data"].split(",", 1)[-1]
+            parts.append({"inline_data": {"mime_type": "application/pdf", "data": data}})
+    return parts
+
+
+def _gemini_generate(model: str, system: str, content: list[dict[str, Any]]) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    body = json.dumps({
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": _gemini_parts(content)}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        GEMINI_URL.format(model=model),
+        data=body,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=OPENAI_TIMEOUT_S) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"Gemini request failed ({exc.code}): {detail}") from exc
+    candidates = payload.get("candidates") or []
+    parts = ((candidates[0].get("content") or {}).get("parts") or []) if candidates else []
+    text = "".join(str(p.get("text") or "") for p in parts)
+    if not text:
+        reason = (candidates[0].get("finishReason") if candidates else None) or payload.get("promptFeedback")
+        raise ValueError(f"Gemini returned no text ({reason})")
+    return text
+
+
 def _create_response(
     model: str,
     medium: str,
@@ -192,14 +246,20 @@ def _create_response(
     paper: dict[str, Any],
     pdf_base64: str,
     extracted_text: str,
-):
-    return client.responses.create(
-        model=model or DEFAULT_MODEL,
+) -> str:
+    model = model or DEFAULT_MODEL
+    system = _system_prompt(medium, structure_prompt or "", signal_title)
+    content = _user_content(paper, pdf_base64, extracted_text)
+    if _is_gemini(model):
+        return _gemini_generate(model, system, content)
+    response = _openai().responses.create(
+        model=model,
         input=[
-            {"role": "system", "content": _system_prompt(medium, structure_prompt or "", signal_title)},
-            {"role": "user", "content": _user_content(paper, pdf_base64, extracted_text)},
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
         ],
     )
+    return response.output_text
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -325,25 +385,29 @@ def generate_item(
     }
     _progress(f"outputs={len(paper.get('outputs') or [])}")
 
+    provider = "Gemini" if _is_gemini(model_name) else "OpenAI"
     try:
-        _progress(f"calling OpenAI responses.create (timeout={int(OPENAI_TIMEOUT_S)}s)")
-        response = _create_response(
-            model, medium, structure_prompt, signal_title, paper, pdf_base64, extracted,
+        _progress(f"calling {provider} (timeout={int(OPENAI_TIMEOUT_S)}s)")
+        output_text = _create_response(
+            model_name, medium, structure_prompt, signal_title, paper, pdf_base64, extracted,
         )
-        _progress("OpenAI script/deck finished")
+        _progress(f"{provider} script/deck finished")
     except Exception as exc:
-        timed_out = isinstance(exc, getattr(openai, "APITimeoutError", ())) or "timed out" in str(exc).lower()
+        timed_out = (
+            isinstance(exc, (getattr(openai, "APITimeoutError", ()), TimeoutError))
+            or "timed out" in str(exc).lower()
+        )
         if not timed_out or not (extracted or pdf_base64 or paper.get("abstract")):
-            _progress(f"OpenAI failed: {exc}")
+            _progress(f"{provider} failed: {exc}")
             raise
         # Cluster egress often cannot finish a full-paper request before the API times out.
         source = "abstract"
-        _progress(f"OpenAI timed out ({exc}); retrying from abstract only")
-        response = _create_response(
-            model, medium, structure_prompt, signal_title, paper, "", "",
+        _progress(f"{provider} timed out ({exc}); retrying from abstract only")
+        output_text = _create_response(
+            model_name, medium, structure_prompt, signal_title, paper, "", "",
         )
-        _progress("OpenAI abstract fallback finished")
-    result = _parse_json(response.output_text)
+        _progress(f"{provider} abstract fallback finished")
+    result = _parse_json(output_text)
     _progress("parsed model JSON")
 
     tags = [str(t).strip().lower() for t in (result.get("tags") or []) if str(t).strip()][:6]
