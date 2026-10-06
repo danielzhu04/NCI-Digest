@@ -18,6 +18,9 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from typing import Any
 
+from .reusableOutputs import curate_outputs as _curate_text_outputs
+from .reusableOutputs import find_outputs, merge_outputs
+
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 PUBMED_TRENDING_URL = "https://pubmed.ncbi.nlm.nih.gov/trending/"
 ICITE_URL = "https://icite.od.nih.gov/api/pubs"
@@ -55,14 +58,7 @@ JOURNAL_QUERY = (
 GRANT_CORE_RE = re.compile(r"(?:(\d))?([A-Z]\d{2})([A-Z]{2})(\d{6})")
 GRANT_CA_RE = re.compile(r"(?:[A-Z]\d{2})?CA\d{6}")
 
-OUTPUT_PATTERNS = [
-    (re.compile(r"\b(GSE\d+)\b", re.I), "geo", "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={id}"),
-    (re.compile(r"\b(GDS\d+)\b", re.I), "geo", "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={id}"),
-    (re.compile(r"\b(SR[PRX]\d+)\b", re.I), "sra", "https://www.ncbi.nlm.nih.gov/sra/?term={id}"),
-    (re.compile(r"\b(phs\d+)\b", re.I), "dbgap", "https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/study.cgi?study_id={id}"),
-    (re.compile(r"(github\.com/[\w.\-]+/[\w.\-]+)", re.I), "github", "https://{id}"),
-    (re.compile(r"(10\.5281/zenodo\.\d+)", re.I), "zenodo", "https://doi.org/{id}"),
-]
+# Accession regexes live in reusableOutputs.find_outputs.
 
 RCR_THRESHOLD = 2.0
 RECENT_DAYS = 365
@@ -189,23 +185,86 @@ def parse_pub_date(year: str, month: str, day: str, medline_date: str | None) ->
     return None
 
 
-def find_outputs(text: str) -> list[dict[str, str]]:
-    # Scan title/abstract for GEO, SRA, dbGaP, GitHub, Zenodo. Used to badge reusable outputs.
-    found: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for pattern, kind, url_tmpl in OUTPUT_PATTERNS:
-        for match in pattern.finditer(text or ""):
-            raw_id = match.group(1)
-            key = (kind, raw_id.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append({
-                "type": kind,
-                "id": raw_id,
-                "url": url_tmpl.format(id=raw_id),
-            })
+def pubmed_elink_outputs(pmids: list[str]) -> dict[str, list[dict[str, str]]]:
+    """Attach GEO / SRA records PubMed already linked, even if the abstract omits the accession."""
+    clean = [pmid for pmid in _dedupe_pmids(pmids) if pmid]
+    linked: dict[str, list[dict[str, str]]] = {pmid: [] for pmid in clean}
+    if not clean:
+        return linked
+    gds_by_pmid: dict[str, list[str]] = {}
+    sra_by_pmid: dict[str, list[str]] = {}
+    for start in range(0, len(clean), 40):
+        batch = clean[start:start + 40]
+        gds_by_pmid.update(_elink_ids(batch, "gds"))
+        sra_by_pmid.update(_elink_ids(batch, "sra"))
+    gds_meta = _esummary_accessions([uid for uids in gds_by_pmid.values() for uid in uids], "gds")
+    sra_meta = _esummary_accessions([uid for uids in sra_by_pmid.values() for uid in uids], "sra")
+    for pmid, uids in gds_by_pmid.items():
+        for uid in uids:
+            acc = gds_meta.get(uid)
+            if acc:
+                linked[pmid].append({
+                    "type": "geo",
+                    "id": acc,
+                    "url": f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={acc}",
+                })
+    for pmid, uids in sra_by_pmid.items():
+        for uid in uids:
+            acc = sra_meta.get(uid)
+            if acc:
+                linked[pmid].append({
+                    "type": "sra",
+                    "id": acc,
+                    "url": f"https://www.ncbi.nlm.nih.gov/sra/?term={acc}",
+                })
+    return {pmid: merge_outputs(items) for pmid, items in linked.items()}
+
+
+def _elink_ids(pmids: list[str], db: str) -> dict[str, list[str]]:
+    url = f"{EUTILS}/elink.fcgi?{_ncbi_params({'dbfrom': 'pubmed', 'db': db, 'id': ','.join(pmids), 'retmode': 'json'})}"
+    try:
+        payload = _http_get_json(url)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return {}
+    _ncbi_pause()
+    found: dict[str, list[str]] = {}
+    for linkset in payload.get("linksets") or []:
+        source = str((linkset.get("ids") or ["",])[0])
+        if not source:
+            continue
+        uids: list[str] = []
+        for db_links in linkset.get("linksetdbs") or []:
+            uids.extend(str(uid) for uid in (db_links.get("links") or []) if uid)
+        if uids:
+            found[source] = _dedupe_pmids(uids)
     return found
+
+
+def _esummary_accessions(uids: list[str], db: str) -> dict[str, str]:
+    ids = _dedupe_pmids([str(uid) for uid in uids if uid])
+    accessions: dict[str, str] = {}
+    for start in range(0, len(ids), 40):
+        batch = ids[start:start + 40]
+        url = f"{EUTILS}/esummary.fcgi?{_ncbi_params({'db': db, 'id': ','.join(batch), 'retmode': 'json'})}"
+        try:
+            payload = _http_get_json(url)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            continue
+        _ncbi_pause()
+        result = payload.get("result") or {}
+        for uid in batch:
+            row = result.get(uid) or {}
+            acc = str(row.get("accession") or row.get("Accession") or row.get("accn") or row.get("caption") or "").strip()
+            if acc:
+                accessions[uid] = acc
+    return accessions
+
+
+def curate_outputs(paper: dict[str, Any] | None = None, extra_text: str = "") -> list[dict[str, str]]:
+    paper = paper or {}
+    pmid = str(paper.get("pmid") or "")
+    linked = pubmed_elink_outputs([pmid]).get(pmid, []) if pmid else []
+    return merge_outputs(_curate_text_outputs(paper, extra_text=extra_text), linked)
 
 
 def _dedupe_pmids(ids: list[str]) -> list[str]:
@@ -459,10 +518,11 @@ def altmetric_enrich(papers: list[dict[str, Any]]) -> str:
     return "citations" if not blocked else "unavailable"
 
 
-def existing_pmids() -> set[str]:
-    # PMIDs already in the episode catalog. Drops papers we have already podcasted.
+def existing_pmids(catalog_url: str | None = None) -> set[str]:
+    # PMIDs already in an episode catalog. Drops papers that feed has already used.
+    url = catalog_url or MANIFEST_URL
     try:
-        payload = _http_get_json(f"{MANIFEST_URL}?t={int(time.time())}", timeout=15)
+        payload = _http_get_json(f"{url}?t={int(time.time())}", timeout=15)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return set()
     if not isinstance(payload, list):
@@ -473,6 +533,29 @@ def existing_pmids() -> set[str]:
         if pmid:
             found.add(pmid)
     return found
+
+
+def pubmed_term(
+    days: int,
+    topic_query: str = "",
+    require_nci: bool = True,
+    journals: bool = False,
+) -> str:
+    # Build a PubMed query. Flagship is NCI-only; a scoped feed adds a topic clause.
+    parts: list[str] = []
+    if require_nci:
+        parts.append("(CA[gr] OR NCI[gr])")
+    topic = (topic_query or "").strip()
+    if topic:
+        parts.append(f"({topic})")
+    if journals:
+        parts.append(f"({JOURNAL_QUERY})")
+    if not parts:
+        raise ValueError("Need a topic query or the NCI grant filter")
+    parts.append(f'"last {days} days"[PDat]')
+    parts.append("english[la]")
+    parts.append("journal article[pt]")
+    return " AND ".join(parts)
 
 
 def _nci_grants(paper: dict[str, Any]) -> list[str]:
@@ -536,7 +619,7 @@ def _to_candidate(paper: dict[str, Any]) -> dict[str, Any]:
     if isinstance(rank, int) and rank > 0:
         reason = f"PubMed trending #{rank}"
     elif paper.get("lane") == "weekly":
-        reason = "this week's NCI paper"
+        reason = "this week's NCI paper" if paper.get("require_nci", True) else "this week's paper"
     elif paper.get("lane") == "attention":
         if source == "altmetric" and isinstance(attention, (int, float)):
             reason = f"Altmetric {attention:.1f}"
@@ -582,22 +665,36 @@ def _to_candidate(paper: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, Any]:
-    # Weekly NCI search → intersect PubMed Trending → rank by trending order.
+def find_candidates(
+    window: str = DEFAULT_WINDOW,
+    limit: int = 10,
+    topic_query: str = "",
+    require_nci: bool = True,
+    catalog_url: str | None = None,
+    journals_only: bool = False,
+    require_outputs: bool = False,
+    exclude_pmids: list[str] | None = None,
+    trending_only: bool = True,
+) -> dict[str, Any]:
+    # Weekly search → intersect PubMed Trending → rank by trending order.
+    # Flagship defaults: NCI grants, no topic, nci-signal catalog.
+    # Community signals pass exclude_pmids from their own history instead of a catalog.
     days = parse_window(window)
-    used = existing_pmids()
+    topic_query = (topic_query or "").strip()
+    require_nci = bool(require_nci)
+    catalog = catalog_url or MANIFEST_URL
+    if exclude_pmids is not None:
+        used = {str(pmid) for pmid in exclude_pmids if pmid}
+    else:
+        used = existing_pmids(catalog)
     trending_pmids = fetch_pubmed_trending_pmids()
     trending_rank = {pmid: index + 1 for index, pmid in enumerate(trending_pmids)}
 
-    recent_term = (
-        f"(CA[gr] OR NCI[gr]) AND (\"last {days} days\"[PDat]) "
-        f"AND english[la] AND journal article[pt]"
-    )
-    flagship_term = (
-        f"(CA[gr] OR NCI[gr]) AND ({JOURNAL_QUERY}) "
-        f'AND ("last {days} days"[PDat]) AND english[la] AND journal article[pt]'
-    )
-    recent_ids = [pmid for pmid in pubmed_search(recent_term, retmax=120) if pmid not in used]
+    recent_term = pubmed_term(days, topic_query, require_nci, journals=False)
+    flagship_term = pubmed_term(days, topic_query, require_nci, journals=True)
+    recent_ids = [] if journals_only else [
+        pmid for pmid in pubmed_search(recent_term, retmax=120) if pmid not in used
+    ]
     flagship_ids = [pmid for pmid in pubmed_search(flagship_term, retmax=80) if pmid not in used]
 
     lane_b_ids: list[str] = []
@@ -606,10 +703,7 @@ def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, 
     # Set SEARCH_OLDER_PAPERS = True to restore the 5-year highly-cited backup search.
     if SEARCH_OLDER_PAPERS:
         if len(recent_ids) + len(flagship_ids) < 8:
-            lane_b_term = (
-                f"(CA[gr] OR NCI[gr]) AND (\"last 5 years\"[PDat]) "
-                f"AND english[la] AND journal article[pt]"
-            )
+            lane_b_term = pubmed_term(5 * 365, topic_query, require_nci, journals=False)
             lane_b_ids = [
                 pmid for pmid in pubmed_search(lane_b_term, retmax=150)
                 if pmid not in used and pmid not in recent_ids and pmid not in flagship_ids
@@ -617,7 +711,10 @@ def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, 
 
     all_ids = list(dict.fromkeys(recent_ids + flagship_ids + lane_b_ids))
     papers = pubmed_efetch(all_ids)
-    papers = [paper for paper in papers if _is_nci_paper(paper) and paper["pmid"] not in used]
+    papers = [
+        paper for paper in papers
+        if paper["pmid"] not in used and (not require_nci or _is_nci_paper(paper))
+    ]
 
     icite: dict[str, dict[str, Any]] = {}
     if SEARCH_OLDER_PAPERS:
@@ -638,6 +735,14 @@ def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, 
         paper["attention_source"] = "pubmed_trending" if rank else "none"
         paper["attention_score"] = float(TRENDING_LIST_SIZE + 1 - rank) if rank else 0.0
         paper["altmetric"] = None
+        paper["require_nci"] = require_nci
+
+    linked = pubmed_elink_outputs([paper["pmid"] for paper in papers])
+    for paper in papers:
+        paper["outputs"] = merge_outputs(paper.get("outputs"), linked.get(paper["pmid"]))
+
+    if require_outputs:
+        papers = [paper for paper in papers if paper.get("outputs")]
 
     # Parked: Altmetric Details Page scoring. Set USE_ALTMETRIC = True to restore.
     if USE_ALTMETRIC:
@@ -656,14 +761,17 @@ def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, 
             paper["lane"] = None
 
     trending_kept = [paper for paper in papers if paper.get("lane") == "trending"]
-    if trending_kept:
+    if trending_kept and trending_only:
         kept = trending_kept
         attention_source = "pubmed_trending"
     else:
         kept = [paper for paper in papers if paper.get("lane") in {"weekly", "trending", "rcr"}]
         if not kept:
             kept = papers
-        attention_source = "weekly_fallback" if kept else "none"
+        if trending_kept:
+            attention_source = "pubmed_trending_first"
+        else:
+            attention_source = "weekly_fallback" if kept else "none"
 
     openalex_enrich(kept)
     kept.sort(key=lambda paper: (
@@ -680,6 +788,11 @@ def find_candidates(window: str = DEFAULT_WINDOW, limit: int = 10) -> dict[str, 
         "trending_listed": len(trending_pmids),
         "trending_hits": len(trending_kept),
         "attention_source": attention_source,
+        "topic_query": topic_query,
+        "require_nci": require_nci,
+        "journals_only": bool(journals_only),
+        "require_outputs": bool(require_outputs),
+        "catalog_url": catalog,
         "candidates": candidates,
     }
 

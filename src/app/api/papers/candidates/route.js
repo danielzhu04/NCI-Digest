@@ -10,14 +10,22 @@ export async function GET(request) {
   }
 
   const { searchParams } = new URL(request.url)
-  const window = searchParams.get("window") || "7d"
+  const window = searchParams.get("window") || ""
   const limit = Number(searchParams.get("limit") || 10)
+  const feed = searchParams.get("feed") || ""
+  const topic_query = searchParams.get("topic") || ""
+  const require_nci = searchParams.get("nci") !== "0"
 
   try {
-    const result = await python("tasks.paperFinder.find_candidates", {
-      kargs: [],
-      kwargs: { window, limit },
-    })
+    const result = feed
+      ? await python("tasks.feeds.run_feed", {
+          kargs: [],
+          kwargs: { slug: feed, window, limit },
+        })
+      : await python("tasks.paperFinder.find_candidates", {
+          kargs: [],
+          kwargs: { window: window || "7d", limit, topic_query, require_nci },
+        })
     return Response.json(result)
   } catch (e) {
     console.error(e)

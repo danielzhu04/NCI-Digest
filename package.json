@@ -1,5 +1,5 @@
 {
-  "name": "genome-lens",
+  "name": "nci-signal",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,7 +10,8 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "worker": "node src/lib/graphile/worker.js",
-    "migrate": "kysely migrate:latest"
+    "migrate": "kysely migrate:latest",
+    "feed": "python3 src/tasks/feeds.py"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.3",

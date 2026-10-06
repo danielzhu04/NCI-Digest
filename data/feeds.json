@@ -1,0 +1,13 @@
+{
+  "feeds": [
+    {
+      "slug": "flagship",
+      "name": "NCI Signal",
+      "topic_query": "",
+      "require_nci": true,
+      "window": "7d",
+      "prompt": "v2_ted_talk",
+      "catalog_prefix": "nci-signal"
+    }
+  ]
+}

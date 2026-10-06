@@ -7,4 +7,6 @@ dist/
 next-env.d.ts
 __pycache__/
 *.pyc
+podcast/
+.venv/
 NCI-podcast-site-plan.md

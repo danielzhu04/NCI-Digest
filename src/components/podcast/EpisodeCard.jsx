@@ -14,7 +14,7 @@ export default function EpisodeCard({ episode, index }) {
       transition={{ duration: 0.8, delay: index * 0.08, ease }}
       className="group"
     >
-      <Link to={`/episode/${episode.id}`} className="block focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-4 focus:ring-offset-alabaster rounded-lg">
+      <Link to={`/nci-signal/episode/${episode.id}`} className="block focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-4 focus:ring-offset-alabaster rounded-lg">
         {/* Image */}
         <div className="relative overflow-hidden rounded-lg aspect-[4/3] bg-graphite/5 mb-5">
           {episode.image_url ? (

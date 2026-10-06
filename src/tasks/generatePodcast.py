@@ -198,6 +198,7 @@ def generate(
     publication_url: str,
     tool_url: str,
     image_url: str,
+    prompt_name: str = "",
     pmid: str = "",
     doi: str = "",
     journal: str = "",
@@ -218,6 +219,7 @@ def generate(
         nci_grants=nci_grants,
         journal=journal,
         outputs=outputs,
+        prompt_name=prompt_name or None,
     )
     script_text = result["script"]
     paper_title = result["title"]
@@ -261,6 +263,7 @@ def generate(
         "nci_grants": nci_grants,
         "impact": impact,
         "outputs": outputs,
+        "prompt": result.get("_prompt"),
     }
     addEpisode(episode_entry)
     return podcast_url

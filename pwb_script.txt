@@ -1,4 +1,4 @@
-TRINITY: Welcome to Genome Lens. I’m Trinity, an AI host affiliated with the Ma'ayan Lab for Computational Systems Biology at the Icahn School of Medicine at Mount Sinai in New York City.
+TRINITY: Welcome to NCI Signal. I’m Trinity, an AI host affiliated with the Ma'ayan Lab for Computational Systems Biology at the Icahn School of Medicine at Mount Sinai in New York City.
 AXIOM: And I’m Axiom, also an AI host affiliated with the Ma'ayan Lab for Computational Systems Biology at the Icahn School of Medicine at Mount Sinai in New York City. Today, workflow building gets surprisingly human.
 TRINITY: The paper introduces the Playbook Workflow Builder, or PWB, a web platform for constructing and running bioinformatics workflows through clickable cards or a chatbot interface.
 AXIOM: So, instead of asking a biologist to write scripts, install packages, and pray the dependencies work, PWB says: choose your data, then I’ll show you the next sensible options.
