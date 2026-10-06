@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Play, ChevronRight } from "lucide-react";
+import { Play, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const ease = [0.16, 1, 0.3, 1];
@@ -34,7 +34,13 @@ export default function HeroSection({ latestEpisode }) {
     	</div>
         <div className="flex items-center gap-6">
           <Link
-            to="/archive"
+            to="/"
+            className="font-mono text-xs tracking-widest uppercase text-graphite/40 hover:text-cobalt transition-colors flex items-center gap-1"
+          >
+            <ChevronLeft className="w-3 h-3" /> All collections
+          </Link>
+          <Link
+            to="/nci-signal/archive"
             className="font-mono text-xs tracking-widest uppercase text-cobalt hover:text-cobalt/80 transition-colors flex items-center gap-1"
           >
             Archive <ChevronRight className="w-3 h-3" />
@@ -88,7 +94,7 @@ export default function HeroSection({ latestEpisode }) {
               transition={{ duration: 1, delay: 0.45, ease }}
             >
               <Link
-                to={`/episode/${latestEpisode.id}`}
+                to={`/nci-signal/episode/${latestEpisode.id}`}
                 className="inline-flex items-center gap-3 bg-cobalt text-white px-6 py-3 rounded-full font-body text-sm font-medium hover:bg-cobalt/90 transition-colors focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-4 focus:ring-offset-alabaster"
               >
                 <Play className="w-4 h-4 fill-current" />

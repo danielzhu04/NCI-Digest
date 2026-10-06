@@ -38,10 +38,10 @@ export default function Archive() {
     <div className="min-h-screen bg-alabaster">
       <div className="px-6 md:px-16 py-6 flex items-center justify-between">
         <Link
-          to="/"
+          to="/nci-signal"
           className="inline-flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-graphite/50 hover:text-graphite transition-colors focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-4 rounded"
         >
-          <ArrowLeft className="w-3 h-3" /> Home
+          <ArrowLeft className="w-3 h-3" /> NCI Signal
         </Link>
         <p className="font-mono text-[11px] tracking-[0.3em] uppercase text-graphite/30">
           NCI Signal

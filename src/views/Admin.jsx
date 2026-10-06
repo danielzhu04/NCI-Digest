@@ -22,6 +22,17 @@ export default function Admin() {
   const [candidateStatus, setCandidateStatus] = useState("idle");
   const [candidateError, setCandidateError] = useState("");
   const [windowDays, setWindowDays] = useState("7d");
+  const [feeds, setFeeds] = useState([]);
+  const [feedPrompts, setFeedPrompts] = useState(["v2_ted_talk"]);
+  const [feedSlug, setFeedSlug] = useState("flagship");
+  const [newFeed, setNewFeed] = useState({
+    name: "",
+    topic_query: "",
+    require_nci: true,
+    prompt: "v2_ted_talk",
+  });
+  const [feedBusy, setFeedBusy] = useState(false);
+  const [feedError, setFeedError] = useState("");
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
@@ -53,7 +64,12 @@ export default function Admin() {
     setCandidateStatus("loading");
     setCandidateError("");
     try {
-      const res = await fetch(`/api/papers/candidates?window=${encodeURIComponent(windowDays)}&limit=10`, {
+      const params = new URLSearchParams({
+        window: windowDays,
+        limit: "10",
+        feed: feedSlug || "flagship",
+      });
+      const res = await fetch(`/api/papers/candidates?${params}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -68,6 +84,9 @@ export default function Admin() {
         attention_source: data.attention_source,
         trending_listed: data.trending_listed,
         trending_hits: data.trending_hits,
+        require_nci: data.require_nci !== false,
+        topic_query: data.topic_query || "",
+        feed: data.feed || null,
       });
       setCandidateStatus("ready");
     } catch (err) {
@@ -77,12 +96,95 @@ export default function Admin() {
     }
   }
 
+  async function fetchFeeds() {
+    setFeedError("");
+    try {
+      const res = await fetch("/api/feeds", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load feeds");
+      }
+      setFeeds(data.feeds || []);
+      setFeedPrompts(data.prompts || ["v2_ted_talk"]);
+    } catch (err) {
+      setFeedError(err.message || "Failed to load feeds");
+    }
+  }
+
+  async function saveFeed() {
+    if (!newFeed.name.trim() || !newFeed.topic_query.trim()) {
+      setFeedError("Name and PubMed topic are required for a scoped feed");
+      return;
+    }
+    setFeedBusy(true);
+    setFeedError("");
+    try {
+      const res = await fetch("/api/feeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newFeed.name.trim(),
+          topic_query: newFeed.topic_query.trim(),
+          require_nci: newFeed.require_nci,
+          window: windowDays,
+          prompt: newFeed.prompt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save feed");
+      }
+      setNewFeed({
+        name: "",
+        topic_query: "",
+        require_nci: true,
+        prompt: "v2_ted_talk",
+      });
+      await fetchFeeds();
+      if (data.feed?.slug) {
+        setFeedSlug(data.feed.slug);
+      }
+    } catch (err) {
+      setFeedError(err.message || "Failed to save feed");
+    } finally {
+      setFeedBusy(false);
+    }
+  }
+
+  async function removeFeed(slug) {
+    setFeedBusy(true);
+    setFeedError("");
+    try {
+      const res = await fetch(`/api/feeds?slug=${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete feed");
+      }
+      setFeeds(data.feeds || []);
+      if (feedSlug === slug) {
+        setFeedSlug("flagship");
+      }
+    } catch (err) {
+      setFeedError(err.message || "Failed to delete feed");
+    } finally {
+      setFeedBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (authenticated) {
       fetchEpisodes();
-      fetchCandidates();
+      fetchFeeds();
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    if (authenticated) {
+      fetchCandidates();
+    }
+  }, [authenticated, feedSlug]);
 
   function handleChange(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -142,6 +244,7 @@ export default function Admin() {
     formData.append("nci_grants", JSON.stringify(paperMeta?.nci_grants || []));
     formData.append("impact", JSON.stringify(paperMeta?.impact || {}));
     formData.append("outputs", JSON.stringify(paperMeta?.outputs || []));
+    formData.append("prompt_name", candidateMeta?.feed?.prompt || "");
 
     try {
       const res = await fetch("/api/podcasts/generate", {
@@ -168,6 +271,7 @@ export default function Admin() {
   }
 
   const isSubmitting = status === "submitting";
+  const selectedFeed = feeds.find((feed) => feed.slug === feedSlug) || null;
 
   if (!authenticated) {
     return (
@@ -229,10 +333,23 @@ export default function Admin() {
                 Candidates
               </p>
               <p className="font-body text-sm text-graphite/50 max-w-lg">
-                This week's NCI-supported papers that also appear on PubMed Trending, ranked by trending order. If none overlap, the full weekly NCI list is shown.
+                {selectedFeed?.slug && selectedFeed.slug !== "flagship"
+                  ? `Papers matching “${selectedFeed.topic_query}”${selectedFeed.require_nci ? " and NCI support" : ""}, filtered by PubMed Trending.`
+                  : "This week's NCI-supported papers that also appear on PubMed Trending, ranked by trending order. If none overlap, the full weekly NCI list is shown."}
               </p>
             </div>
             <div className="flex items-center gap-3">
+              <select
+                value={feedSlug}
+                onChange={(e) => setFeedSlug(e.target.value)}
+                className="font-mono text-xs uppercase tracking-widest bg-transparent border-b border-graphite/15 py-2 outline-none"
+              >
+                {(feeds.length ? feeds : [{ slug: "flagship", name: "NCI Signal" }]).map((feed) => (
+                  <option key={feed.slug} value={feed.slug}>
+                    {feed.name}
+                  </option>
+                ))}
+              </select>
               <select
                 value={windowDays}
                 onChange={(e) => setWindowDays(e.target.value)}
@@ -252,6 +369,71 @@ export default function Admin() {
             </div>
           </div>
 
+          <div className="border border-graphite/10 rounded p-4 space-y-4">
+            <p className="font-mono text-[11px] tracking-[0.3em] uppercase text-graphite/40">
+              New scoped feed
+            </p>
+            <p className="font-body text-sm text-graphite/50">
+              Scope a PubMed topic the flagship weekly list will miss. Finding candidates does not generate audio. Generate still publishes to the flagship catalog.
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Feed name">
+                <input
+                  value={newFeed.name}
+                  onChange={(e) => setNewFeed((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="Pancreatic cancer"
+                  className="w-full bg-transparent border-b border-graphite/15 focus:border-cobalt outline-none py-2 font-body text-sm text-graphite"
+                />
+              </Field>
+              <Field label="PubMed topic">
+                <input
+                  value={newFeed.topic_query}
+                  onChange={(e) => setNewFeed((f) => ({ ...f, topic_query: e.target.value }))}
+                  placeholder='pancreatic neoplasms[mh] OR "pancreatic cancer"[tiab]'
+                  className="w-full bg-transparent border-b border-graphite/15 focus:border-cobalt outline-none py-2 font-body text-sm text-graphite"
+                />
+              </Field>
+              <Field label="Script prompt">
+                <select
+                  value={newFeed.prompt}
+                  onChange={(e) => setNewFeed((f) => ({ ...f, prompt: e.target.value }))}
+                  className="w-full bg-transparent border-b border-graphite/15 focus:border-cobalt outline-none py-2 font-mono text-xs text-graphite"
+                >
+                  {feedPrompts.map((prompt) => (
+                    <option key={prompt} value={prompt}>{prompt}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-graphite/50">
+              <input
+                type="checkbox"
+                checked={newFeed.require_nci}
+                onChange={(e) => setNewFeed((f) => ({ ...f, require_nci: e.target.checked }))}
+              />
+              NCI grant filter
+            </label>
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                onClick={saveFeed}
+                disabled={feedBusy}
+                className="font-mono text-xs uppercase tracking-widest bg-cobalt text-alabaster px-4 py-2 rounded hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {feedBusy ? "Saving…" : "Save feed"}
+              </button>
+              {selectedFeed?.slug && selectedFeed.slug !== "flagship" && (
+                <button
+                  onClick={() => removeFeed(selectedFeed.slug)}
+                  disabled={feedBusy}
+                  className="font-mono text-xs uppercase tracking-widest text-graphite/45 hover:text-red-500 disabled:opacity-50"
+                >
+                  Delete this feed
+                </button>
+              )}
+            </div>
+            {feedError && <p className="font-mono text-xs text-red-500">{feedError}</p>}
+          </div>
+
           {candidateMeta && (
             <p className="font-mono text-[11px] text-graphite/35">
               Window {candidateMeta.window} · queried {candidateMeta.queried} · kept {candidateMeta.kept}
@@ -263,10 +445,16 @@ export default function Admin() {
           )}
           {candidateError && <p className="font-mono text-xs text-red-500">{candidateError}</p>}
           {candidateStatus === "loading" && (
-            <p className="font-mono text-xs text-graphite/40">Searching this week's NCI papers and PubMed Trending…</p>
+            <p className="font-mono text-xs text-graphite/40">
+              {selectedFeed?.slug && selectedFeed.slug !== "flagship"
+                ? "Searching this feed's papers and PubMed Trending…"
+                : "Searching this week's NCI papers and PubMed Trending…"}
+            </p>
           )}
           {candidateStatus === "ready" && candidates.length === 0 && (
-            <p className="font-mono text-xs text-graphite/40">No unused NCI papers in this week's window.</p>
+            <p className="font-mono text-xs text-graphite/40">
+              No unused papers in this feed's window.
+            </p>
           )}
 
           <div className="space-y-4">
@@ -275,6 +463,7 @@ export default function Admin() {
                 key={candidate.pmid}
                 candidate={candidate}
                 selected={paperMeta?.pmid === candidate.pmid}
+                requireNci={candidateMeta?.require_nci !== false}
                 onUse={() => usePaper(candidate)}
               />
             ))}
@@ -426,7 +615,7 @@ function Field({ label, children }) {
   );
 }
 
-function CandidateCard({ candidate, selected, onUse }) {
+function CandidateCard({ candidate, selected, requireNci, onUse }) {
   return (
     <div className={`border rounded p-4 space-y-3 ${selected ? "border-cobalt" : "border-graphite/15"}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -435,7 +624,9 @@ function CandidateCard({ candidate, selected, onUse }) {
             ? "Citation lane"
             : candidate.lane === "trending"
               ? "PubMed trending"
-              : "This week's NCI"}
+              : requireNci === false
+                ? "This week"
+                : "This week's NCI"}
         </span>
         {candidate.journal && (
           <span className="font-mono text-[10px] tracking-widest uppercase text-graphite/40">

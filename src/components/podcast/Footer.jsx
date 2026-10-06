@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Github, Twitter, Globe, ArrowRight } from "lucide-react";
 
-export default function Footer() {
+export default function Footer({ platform = false }) {
   const [email, setEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
 
@@ -25,9 +25,11 @@ export default function Footer() {
               className="h-20 w-auto"
             />
 
-            <h3 className="font-heading text-2xl font-semibold text-white">NCI Signal</h3>
+            <h3 className="font-heading text-2xl font-semibold text-white">{platform ? "NCI Digest" : "NCI Signal"}</h3>
             <p className="font-body text-sm text-white/50 leading-relaxed max-w-xs">
-              Each week we cover the NCI-supported cancer paper that drew the most attention — and the data, code, and tools it left behind. Built by the Ma'ayan Laboratory.
+              {platform
+                ? "Turn cancer research papers into podcasts, talks, slides, or videos, then share that content from your collection. Built by the Ma'ayan Laboratory."
+                : "Each week we cover the NCI-supported cancer paper that drew the most attention — and the data, code, and tools it left behind. Built by the Ma'ayan Laboratory."}
             </p>
             <div className="flex items-center gap-1">
               <span className="font-mono text-[10px] tracking-widest uppercase text-white/30">

@@ -46,6 +46,7 @@ export async function POST(request) {
     nci_grants: parseJsonField(formData.get('nci_grants'), []),
     impact: parseJsonField(formData.get('impact'), {}),
     outputs: parseJsonField(formData.get('outputs'), []),
+    prompt_name: formData.get('prompt_name') || "",
   }
 
   try {

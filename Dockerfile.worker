@@ -13,4 +13,5 @@ RUN npm i
 ADD src ./src
 ENV PYTHON_BIN=/app/.venv/bin/python
 ENV PYTHON_ROOT=/app
+ENV PYTHONUNBUFFERED=1
 CMD [ "npm", "run", "worker" ]

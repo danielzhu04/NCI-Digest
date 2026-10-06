@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.app
-    image: danielzhu04/nci-signal-app:0.1.0
+    image: danielzhu04/nci-signal-app:0.1.5
     platform: linux/amd64
     pull_policy: if_not_present
     ports:
@@ -15,6 +15,12 @@ services:
     - DATABASE_URL=${PROD_DATABASE_URL:-postgres://postgres:${POSTGRES_PASSWORD}@nci-signal-postgres:5432/postgres}
     - ADMIN_PASSWORD
     - ADMIN_SESSION_SECRET
+    - SESSION_SECRET
+    - GOOGLE_CLIENT_ID
+    - GOOGLE_CLIENT_SECRET
+    - APP_URL=${PROD_NEXT_PUBLIC_URL}
+    - SIGNAL_MODELS
+    - SIGNAL_DAILY_LIMIT
     - OPENAI_API_KEY
     - RCLONE_CONFIG_MAAYANLAB_TYPE=s3
     - RCLONE_CONFIG_MAAYANLAB_PROVIDER
@@ -32,7 +38,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    image: danielzhu04/nci-signal-worker:0.1.0
+    image: danielzhu04/nci-signal-worker:0.1.5
     platform: linux/amd64
     pull_policy: if_not_present
     environment:

@@ -1,6 +1,10 @@
 import { spawn } from 'child_process'
 import path from 'path'
 
+// Keep the command out of a single string so the Next.js build does not
+// follow the local podcast/bin/python3 shortcut outside the project.
+const pythonCommand = process.env.PYTHON_BIN || ['python', '3'].join('')
+
 export class ProcessError extends Error {
   constructor(message, exitcode) {
     super(message)
@@ -17,10 +21,11 @@ export default function python(pathspec, args, callback) {
     } catch (e) {
       throw new ProcessError(`Process input could not be serialized`, null)
     }
-    const proc = spawn(process.env.PYTHON_BIN || 'python3', [
+    const proc = spawn(pythonCommand, [
+      '-u',
       path.join(process.env.PYTHON_ROOT || '', 'src', 'utils', 'helper.py'),
       pathspec,
-    ], { env: { ...process.env } })
+    ], { env: { ...process.env, PYTHONUNBUFFERED: '1' } })
     let stdout = ''
     proc.stdout.on('data', (chunk) => { stdout += chunk })
     proc.stderr.on('data', callback !== undefined ? (chunk) => callback(chunk.toString()) : (chunk) => { console.warn(`[${pathspec}]: ${chunk.toString()}`) })
@@ -46,7 +51,7 @@ export function pythonStream(pathspec, args) {
   } catch (e) {
     throw new ProcessError(`Process input could not be serialized`, null)
   }
-  const proc = spawn(process.env.PYTHON_BIN || 'python3', [
+  const proc = spawn(pythonCommand, [
     '-u',
     path.join(process.env.PYTHON_ROOT || '', 'src', 'utils', 'helper.py'),
     pathspec,

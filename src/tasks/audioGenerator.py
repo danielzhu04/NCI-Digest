@@ -10,6 +10,7 @@ from pydub import AudioSegment
 
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
+    timeout=float(os.getenv("OPENAI_TTS_TIMEOUT", "120")),
 )
 
 VOICE_MAP = {
@@ -166,7 +167,7 @@ def generate_audio(script_text: str, output_file: str, intro_file: str = None, o
         tmpdir = Path(tmpdir)
 
         for i, (speaker, content) in enumerate(segments, start=1):
-            print(f"{i}/{len(segments)}: {speaker}")
+            print(f"{i}/{len(segments)}: {speaker}", flush=True)
 
             if speaker == "SFX":
                 final_audio += make_silence_for_sfx(content)

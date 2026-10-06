@@ -7,3 +7,5 @@ dist/
 .next/standalone/.env.*
 __pycache__/
 *.pyc
+podcast/
+.venv/

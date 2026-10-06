@@ -1,6 +1,6 @@
 export const metadata = {
-  title: "NCI Signal — This week in NCI-supported cancer research",
-  description: "A weekly AI podcast on the NCI-supported cancer paper that drew the most PubMed attention, plus the data, code, and tools it left behind.",
+  title: "NCI Digest — Research paper collections",
+  description: "Convert cancer research publications into a podcast, TED-style talk, slide deck, or narrated video, then share them from your collection.",
   icons: {
     icon: 'https://s3.k8s.maayanlab.cloud/axiom-podcasts/favicon.png',
   },
