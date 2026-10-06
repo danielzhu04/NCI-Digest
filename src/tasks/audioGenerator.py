@@ -8,10 +8,17 @@ load_dotenv()
 from openai import OpenAI
 from pydub import AudioSegment
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    timeout=float(os.getenv("OPENAI_TTS_TIMEOUT", "120")),
-)
+_client = None
+
+
+def _openai():
+    global _client
+    if _client is None:
+        _client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            timeout=float(os.getenv("OPENAI_TTS_TIMEOUT", "120")),
+        )
+    return _client
 
 VOICE_MAP = {
     "TRINITY": {
@@ -120,7 +127,7 @@ def parse_script(text: str):
 def synthesize(text: str, speaker: str, out_path: Path):
     config = VOICE_MAP.get(speaker.upper(), DEFAULT_VOICE)
 
-    response = client.audio.speech.create(
+    response = _openai().audio.speech.create(
         model="gpt-4o-mini-tts",
         voice=config["voice"],
         input=text,

@@ -8,9 +8,14 @@ from .scriptPrompts import get_prompt, render_paper_prompt
 
 dotenv.load_dotenv()
 
-client = openai.Client(
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
+_client = None
+
+
+def _openai():
+    global _client
+    if _client is None:
+        _client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
 
 
 def generate_script(
@@ -42,7 +47,7 @@ def generate_script(
         outputs=output_line,
     )
 
-    response = client.responses.create(
+    response = _openai().responses.create(
         model="gpt-5.5-2026-04-23",
         input=[
             {"role": "system", "content": setup["system"]},
